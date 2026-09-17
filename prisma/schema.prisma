@@ -1,0 +1,871 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Platform / tenancy roles ────────────────────────────────────────────
+// PLATFORM_ADMIN — runs the SaaS itself. Sees company metadata & usage
+//                  counts only, never CRM records (leads/clients/etc).
+// COMPANY_ADMIN  — company-level administrator. Full access to that
+//                  company's CRM, team, and settings. A company can have
+//                  more than one Company Admin; they are all equal — there
+//                  is no separate "owner" tier or login.
+// TL             — leads one Team inside a Company. Full access to their team's CRM.
+// SALES          — a rep, inside a Company (under a Team, or directly under
+//                  a Company Admin) or fully SOLO.
+// SOLO           — a freelancer/individual workspace owner with no Company.
+enum Role {
+  PLATFORM_ADMIN
+  COMPANY_ADMIN
+  TL
+  SALES
+  SOLO
+}
+
+enum WorkspaceType {
+  SOLO
+  COMPANY
+}
+
+enum CompanyStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+enum PlanTier {
+  SOLO_FREE
+  SOLO_PRO
+  SOLO_BUSINESS
+  COMPANY_STARTER
+  COMPANY_GROWTH
+  COMPANY_PRO
+  ENTERPRISE
+}
+
+enum InterestStatus {
+  INTERESTED
+  NOT_INTERESTED
+  ON_HOLD
+}
+
+enum LeadDetailType {
+  COLLEGE
+  COMPANY
+}
+
+enum PipelineStage {
+  NEW
+  CONTACTED
+  QUALIFIED
+  DEMO_SCHEDULED
+  NEGOTIATING
+  WON
+  LOST
+}
+
+enum ActivityType {
+  NOTE
+  CALL
+  EMAIL
+  WHATSAPP
+  MEETING
+  STAGE_CHANGE
+  ASSIGNMENT
+  CONVERSION
+  SYSTEM
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  ONBOARDING
+}
+
+enum ProjectStatus {
+  NEW
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+enum RetainerStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+enum PaymentType {
+  REVENUE
+  EXPENSE
+}
+
+enum PaymentStatus {
+  PENDING
+  RECEIVED
+  FAILED
+  REFUNDED
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum MessageChannel {
+  INTERNAL
+  CLIENT
+}
+
+enum CallStatus {
+  QUEUED
+  DELIVERED
+  RINGING
+  CONNECTED
+  ENDED
+  FAILED
+  EXPIRED
+}
+
+enum CallDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  REVOKED
+}
+
+enum DeviceCommandType {
+  CALL
+}
+
+enum DeviceCommandStatus {
+  QUEUED
+  DELIVERED
+  ACKNOWLEDGED
+  EXPIRED
+  FAILED
+}
+
+enum RecordingUploadStatus {
+  PENDING
+  UPLOADING
+  UPLOADED
+  FAILED
+  DELETED
+}
+
+enum CommunicationProvider {
+  WHATSAPP
+  EMAIL
+}
+
+enum CommunicationStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+model CrmUser {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  companyName String?
+  phone     String?
+  role      Role     @default(SALES)
+  isActive  Boolean  @default(true)
+  // Existing accounts are treated as verified; invited members are created
+  // with isVerified=false and passwordSetAt=null until WhatsApp OTP setup.
+  isVerified Boolean @default(true)
+  verifiedAt DateTime?
+  passwordSetAt DateTime?
+  timezone  String   @default("Asia/Kolkata")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Tenancy. PLATFORM_ADMIN: both null.
+  // SOLO: both null — the user IS their own workspace (see Subscription.soloUserId).
+  // COMPANY_ADMIN: companyId set (their own company), teamId null.
+  // TL: companyId set, teamId null (referenced back via Team.tlId — a TL
+  //     leads a team but is not a row in that team's `members` list).
+  // SALES: companyId set. teamId set if under a TL, null if reporting
+  //        directly to a Company Admin with no team assigned yet.
+  companyId String?
+  company   Company? @relation("CompanyMembers", fields: [companyId], references: [id], onDelete: Cascade)
+
+  teamId String?
+  team   Team?   @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull)
+
+  ledTeam Team? @relation("TeamLead")
+
+  assignedLeads   Lead[]         @relation("LeadAssignee")
+  activities      LeadActivity[] @relation("ActivityAuthor")
+  ownedClients    Client[]       @relation("ClientOwner")
+  ownedProjects   Project[]      @relation("ProjectOwner")
+  ownedRetainers  Retainer[]     @relation("RetainerOwner")
+  recordedPayments Payment[]     @relation("PaymentRecorder")
+  sentMessages    Message[]      @relation("MessageSender")
+  meetings        Meeting[]      @relation("MeetingHost")
+  tasks           Task[]         @relation("TaskAssignee")
+
+  ownedCompany     Company?      @relation("CompanyOwner")
+  soloSubscription Subscription? @relation("SoloSubscription")
+  otpChallenges    OtpChallenge[]
+  devices          Device[]         @relation("DeviceAgent")
+  callSessions     CallSession[]    @relation("CallAgent")
+  communicationLogs CommunicationLog[] @relation("CommunicationSender")
+
+  @@index([companyId])
+  @@index([teamId])
+  @@map("crm_users")
+}
+
+model PendingSignup {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  phone         String?
+  name          String
+  role          Role
+  payload       Json
+  otpChannel    String?
+  otpCodeHash   String?
+  otpExpiresAt  DateTime?
+  otpAttempts   Int      @default(0)
+  otpSentAt     DateTime?
+  otpVerifiedAt DateTime?
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([expiresAt])
+  @@map("pending_signups")
+}
+
+/// A Company is a COMPANY-type tenant workspace. Created by a Platform
+/// Admin (or self-serve signup), owned by exactly one COMPANY_ADMIN user.
+/// The Platform Admin can read this row and aggregate member/usage counts
+/// off it, but is never given a path to the CRM records (Lead/Client/etc)
+/// that hang off its members — enforced in the service layer, not just UI.
+model Company {
+  id     String        @id @default(uuid())
+  name   String
+  status CompanyStatus @default(TRIAL)
+  industry      String?
+  employeeCount Int?
+  website       String?
+  contactPhone  String?
+  city          String?
+
+  ownerId String  @unique
+  owner   CrmUser @relation("CompanyOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members      CrmUser[]     @relation("CompanyMembers")
+  teams        Team[]
+  subscription Subscription? @relation("CompanySubscription")
+  devices      Device[]
+  callSessions CallSession[]
+  communicationLogs CommunicationLog[]
+
+  @@index([status])
+  @@map("companies")
+}
+
+/// A Team is one TL's group of salespeople inside a Company.
+/// TL <-> Team is 1:1 (a TL leads exactly one team); a Team has many
+/// SALES members.
+model Team {
+  id   String @id @default(uuid())
+  name String
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  tlId String  @unique
+  tl   CrmUser @relation("TeamLead", fields: [tlId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members CrmUser[] @relation("TeamMembers")
+
+  @@index([companyId])
+  @@map("teams")
+}
+
+/// A sellable plan. workspaceType determines whether it's offered on SOLO
+/// or COMPANY signup. Limits are enforced at create-time by the relevant
+/// services (e.g. adding a TL beyond maxTLs is blocked) — see Phase 3.
+model Plan {
+  id            String        @id @default(uuid())
+  tier          PlanTier      @unique
+  name          String
+  workspaceType WorkspaceType
+  priceMonthly  Decimal       @default(0) @db.Decimal(10, 2)
+  currency      String        @default("INR")
+
+  maxUsers         Int? // total seats (TL + Sales), null = unlimited
+  maxTLs           Int?
+  maxLeads         Int?
+  storageGB        Int?
+  apiCallsPerMonth Int?
+
+  isActive Boolean @default(true)
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+/// One subscription per workspace — either a Company (COMPANY-tier plans)
+/// or a solo CrmUser (SOLO-tier plans). The Platform Admin manages these;
+/// billing status can gate access but never exposes the CRM data underneath.
+model Subscription {
+  id     String             @id @default(uuid())
+  status SubscriptionStatus @default(TRIALING)
+
+  planId String
+  plan   Plan   @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  companyId String?  @unique
+  company   Company? @relation("CompanySubscription", fields: [companyId], references: [id], onDelete: Cascade)
+
+  soloUserId String?  @unique
+  soloUser   CrmUser? @relation("SoloSubscription", fields: [soloUserId], references: [id], onDelete: Cascade)
+
+  startedAt         DateTime  @default(now())
+  currentPeriodEnd  DateTime?
+  cancelAtPeriodEnd Boolean   @default(false)
+  trialEndsAt       DateTime?
+  razorpayOrderId   String?  @unique
+  razorpayPaymentId String?
+  paidAt            DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@map("subscriptions")
+}
+
+
+enum OtpPurpose {
+  USER_ACTIVATION
+  LOGIN
+  PASSWORD_RESET
+}
+
+model OtpChallenge {
+  id         String     @id @default(uuid())
+  userId     String
+  user       CrmUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose    OtpPurpose @default(USER_ACTIVATION)
+  channel    String     @default("WHATSAPP")
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int        @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime   @default(now())
+
+  @@index([userId, purpose, createdAt])
+  @@index([expiresAt])
+  @@map("otp_challenges")
+}
+
+model Organization {
+  id                   String   @id @default(uuid())
+  name                 String   @default("Skill99")
+  logoUrl              String?
+  currency             String   @default("INR")
+  publicSlug           String   @unique @default("skill99")
+  reminderLeadMinutes  Int      @default(15)
+  browserNotifications Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("organizations")
+}
+
+model Lead {
+  id       String  @id @default(uuid())
+  phone    String  @unique
+  fullName String?
+  email    String?
+
+  detailType    LeadDetailType @default(COLLEGE)
+  collegeName   String?
+  collegeCity   String?
+  collegeCourse String?
+  collegeYear   String?
+  companyName   String?
+  companyCity   String?
+  companyIndustry String?
+  companySize   String?
+
+  interest InterestStatus @default(ON_HOLD)
+  stage    PipelineStage  @default(NEW)
+  source   String         @default("MANUAL")
+  comments String?        @db.Text
+
+  convertedAt  DateTime?
+  convertedRef String?
+
+  assignedToId String?
+  assignedTo   CrmUser? @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Denormalized tenancy scope, stamped at creation from the actor, so
+  // listing/counting leads never needs a join through CrmUser.
+  // null + null   = a SOLO user's lead (owner is assignedToId/createdById).
+  // companyId set, teamId null = created directly under a Company Admin
+  //                (no team yet, or created by the owner themself).
+  // both set      = belongs to that TL's team.
+  companyId String?
+  teamId    String?
+
+  activities LeadActivity[] @relation("LeadActivities")
+  client     Client?
+  callSessions CallSession[]
+  communicationLogs CommunicationLog[]
+
+  @@index([interest])
+  @@index([stage])
+  @@index([source])
+  @@index([collegeName])
+  @@index([companyName])
+  @@index([assignedToId])
+  @@index([companyId])
+  @@index([teamId])
+  @@map("leads")
+}
+
+model LeadActivity {
+  id     String @id @default(uuid())
+  leadId String
+  lead   Lead   @relation("LeadActivities", fields: [leadId], references: [id], onDelete: Cascade)
+
+  authorId String?
+  author   CrmUser? @relation("ActivityAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  type     ActivityType @default(NOTE)
+  body     String?      @db.Text
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([leadId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("lead_activities")
+}
+
+model Client {
+  id      String       @id @default(uuid())
+  name    String
+  email   String?      @unique
+  phone   String?
+  company String?
+  notes   String?      @db.Text
+  status  ClientStatus @default(ONBOARDING)
+
+  leadId String? @unique
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  ownerId String?
+  owner   CrmUser? @relation("ClientOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  // Denormalized tenancy scope for fast company-level filtering/reporting.
+  companyId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects  Project[]
+  retainers Retainer[]
+  payments  Payment[]
+  messages  Message[]
+  meetings  Meeting[]
+  tasks     Task[]
+  reviews   Review[]
+
+  @@index([status])
+  @@index([ownerId])
+  @@index([companyId])
+  @@map("clients")
+}
+
+model Project {
+  id          String        @id @default(uuid())
+  title       String
+  description String?       @db.Text
+  status      ProjectStatus @default(NEW)
+  budget      Decimal       @default(0) @db.Decimal(12, 2)
+  startDate   DateTime?
+  endDate     DateTime?
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  ownerId String?
+  owner   CrmUser? @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  // Denormalized tenancy scope for fast company-level filtering/reporting.
+  companyId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Payment[]
+  tasks    Task[]
+  meetings Meeting[]
+
+  @@index([status])
+  @@index([clientId])
+  @@index([ownerId])
+  @@index([companyId])
+  @@map("projects")
+}
+
+model Retainer {
+  id           String         @id @default(uuid())
+  title        String
+  description  String?        @db.Text
+  status       RetainerStatus @default(ACTIVE)
+  monthlyAmount Decimal       @default(0) @db.Decimal(12, 2)
+  startDate    DateTime       @default(now())
+  endDate      DateTime?
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  ownerId String?
+  owner   CrmUser? @relation("RetainerOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  // Denormalized tenancy scope for fast company-level filtering/reporting.
+  companyId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Payment[]
+
+  @@index([status])
+  @@index([clientId])
+  @@index([companyId])
+  @@map("retainers")
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  title       String
+  amount      Decimal       @db.Decimal(12, 2)
+  type        PaymentType   @default(REVENUE)
+  status      PaymentStatus @default(PENDING)
+  category    String?
+  paidAt      DateTime?
+  notes       String?       @db.Text
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  retainerId String?
+  retainer   Retainer? @relation(fields: [retainerId], references: [id], onDelete: SetNull)
+
+  recordedById String?
+  recordedBy   CrmUser? @relation("PaymentRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  // Denormalized tenancy scope for fast company-level filtering/reporting.
+  companyId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([status])
+  @@index([paidAt])
+  @@index([clientId])
+  @@index([companyId])
+  @@map("payments")
+}
+
+model Message {
+  id      String         @id @default(uuid())
+  subject String?
+  body    String         @db.Text
+  channel MessageChannel @default(INTERNAL)
+  isRead  Boolean        @default(false)
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  senderId String?
+  sender   CrmUser? @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+
+  // Denormalized tenancy scope for fast company-level filtering/reporting.
+  companyId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+  @@index([channel])
+  @@index([createdAt])
+  @@index([companyId])
+  @@map("messages")
+}
+
+model Meeting {
+  id          String        @id @default(uuid())
+  title       String
+  notes       String?       @db.Text
+  startsAt    DateTime
+  endsAt      DateTime?
+  status      MeetingStatus @default(SCHEDULED)
+  location    String?
+  meetUrl     String?
+  reminderMin Int?
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  hostId String?
+  host   CrmUser? @relation("MeetingHost", fields: [hostId], references: [id], onDelete: SetNull)
+
+  // Denormalized tenancy scope for fast company-level filtering/reporting.
+  companyId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([startsAt])
+  @@index([status])
+  @@index([hostId])
+  @@index([companyId])
+  @@map("meetings")
+}
+
+model Task {
+  id          String     @id @default(uuid())
+  title       String
+  description String?    @db.Text
+  status      TaskStatus @default(TODO)
+  dueAt       DateTime?
+  priority    Int        @default(2)
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  assigneeId String?
+  assignee   CrmUser? @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  // Denormalized tenancy scope for fast company-level filtering/reporting.
+  companyId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([dueAt])
+  @@index([assigneeId])
+  @@index([companyId])
+  @@map("tasks")
+}
+
+
+model Device {
+  id            String       @id @default(uuid())
+  companyId     String?
+  company       Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  agentId       String
+  agent         CrmUser      @relation("DeviceAgent", fields: [agentId], references: [id], onDelete: Cascade)
+  deviceId      String       @unique
+  deviceName    String
+  platform      String       @default("ANDROID")
+  appVersion    String       @default("1.0.0")
+  status        DeviceStatus @default(OFFLINE)
+  lastSeenAt    DateTime?
+  selectedSimId String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  callSessions  CallSession[]
+  commands      DeviceCommand[]
+
+  @@index([companyId])
+  @@index([agentId])
+  @@index([status])
+  @@map("devices")
+}
+
+model CallSession {
+  id             String       @id @default(uuid())
+  companyId      String?
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  agentId        String
+  agent          CrmUser      @relation("CallAgent", fields: [agentId], references: [id], onDelete: Cascade)
+  leadId         String
+  lead           Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  deviceId       String
+  device         Device       @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  phoneNumber    String
+  direction      CallDirection @default(OUTBOUND)
+  simSlot        String?
+  status         CallStatus   @default(QUEUED)
+  initiatedAt    DateTime     @default(now())
+  deliveredAt    DateTime?
+  ringingAt      DateTime?
+  connectedAt    DateTime?
+  endedAt        DateTime?
+  durationSeconds Int         @default(0)
+  failureReason  String?
+  disposition    String?
+  notes          String?      @db.Text
+  idempotencyKey String       @unique
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  recordings     CallRecording[]
+  commands       DeviceCommand[]
+  events         CallEvent[]
+
+  @@index([companyId, initiatedAt])
+  @@index([agentId, initiatedAt])
+  @@index([leadId, initiatedAt])
+  @@index([status, initiatedAt])
+  @@map("call_sessions")
+}
+
+model CallEvent {
+  id         String      @id @default(uuid())
+  callId     String
+  call       CallSession @relation(fields: [callId], references: [id], onDelete: Cascade)
+  eventId    String      @unique
+  state      CallStatus
+  payload    Json?
+  createdAt  DateTime    @default(now())
+
+  @@index([callId, createdAt])
+  @@map("call_events")
+}
+
+model CallRecording {
+  id              String                @id @default(uuid())
+  callId          String
+  call            CallSession           @relation(fields: [callId], references: [id], onDelete: Cascade)
+  storageKey      String?
+  mimeType        String?
+  sizeBytes       Int?
+  durationSeconds Int?
+  uploadStatus    RecordingUploadStatus  @default(PENDING)
+  createdAt       DateTime              @default(now())
+  deletedAt       DateTime?
+
+  @@index([callId])
+  @@index([uploadStatus])
+  @@map("call_recordings")
+}
+
+model DeviceCommand {
+  id              String               @id @default(uuid())
+  deviceId        String
+  device          Device               @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  callId          String?
+  call            CallSession?         @relation(fields: [callId], references: [id], onDelete: Cascade)
+  commandType     DeviceCommandType
+  status          DeviceCommandStatus  @default(QUEUED)
+  payload         Json?
+  createdAt       DateTime             @default(now())
+  deliveredAt     DateTime?
+  acknowledgedAt  DateTime?
+  expiresAt       DateTime?
+
+  @@index([deviceId, status, createdAt])
+  @@index([callId])
+  @@map("device_commands")
+}
+
+model CommunicationLog {
+  id          String                @id @default(uuid())
+  companyId   String?
+  company     Company?              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  leadId      String?
+  lead        Lead?                 @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  senderId    String?
+  sender      CrmUser?              @relation("CommunicationSender", fields: [senderId], references: [id], onDelete: SetNull)
+  provider    CommunicationProvider
+  status      CommunicationStatus   @default(QUEUED)
+  recipient   String
+  subject     String?
+  template    String?
+  messageId   String?
+  error       String?               @db.Text
+  metadata    Json?
+  createdAt   DateTime              @default(now())
+  sentAt      DateTime?
+
+  @@index([companyId, createdAt])
+  @@index([leadId, createdAt])
+  @@index([provider, status])
+  @@map("communication_logs")
+}
+
+model Review {
+  id       String  @id @default(uuid())
+  rating   Int
+  comment  String? @db.Text
+  reviewer String?
+  isPublic Boolean @default(true)
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  // Denormalized tenancy scope for fast company-level filtering/reporting.
+  companyId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([isPublic])
+  @@index([companyId])
+  @@map("reviews")
+}
