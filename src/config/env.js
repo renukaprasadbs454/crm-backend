@@ -17,6 +17,7 @@ export const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: Number(process.env.PORT) || 4001,
   databaseUrl: process.env.DATABASE_URL || '',
+  directUrl: process.env.DIRECT_URL || '',
   jwtSecret: process.env.JWT_SECRET || 'dev-only-change-me',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5174',
@@ -53,6 +54,13 @@ export const env = {
   automationStageWhatsapp: String(process.env.AUTOMATION_STAGE_WHATSAPP || 'true').toLowerCase() === 'true',
   automationInterestEmail: String(process.env.AUTOMATION_INTEREST_EMAIL || 'true').toLowerCase() === 'true',
   automationInterestWhatsapp: String(process.env.AUTOMATION_INTEREST_WHATSAPP || 'true').toLowerCase() === 'true',
+  storageProvider: (process.env.STORAGE_PROVIDER || 'local').toLowerCase(),
+  recordingsDir: process.env.RECORDINGS_DIR || './uploads',
+  r2AccountId: process.env.R2_ACCOUNT_ID || '',
+  r2AccessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+  r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+  r2Bucket: process.env.R2_BUCKET || '',
+  r2PublicUrl: (process.env.R2_PUBLIC_URL || '').replace(/\/$/, ''),
 };
 
 export const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5174')
@@ -64,5 +72,9 @@ export function assertProdSecrets() {
   if (env.nodeEnv === 'production') {
     required('DATABASE_URL');
     required('JWT_SECRET');
+    if (!env.directUrl) required('DIRECT_URL');
+    if (env.storageProvider === 'r2') {
+      ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET'].forEach(required);
+    }
   }
 }
