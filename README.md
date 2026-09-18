@@ -35,6 +35,38 @@ API: `http://localhost:4001`
 Health: `GET /health`
 Base: `/api/v1`
 
+## Supabase Postgres and Cloudflare R2
+
+The production backend can use Supabase Postgres for the database and Cloudflare R2 for call recordings. Prisma uses the Supabase pooled connection at runtime and the direct connection for migrations.
+
+1. In Supabase, create a project and copy both connection strings from **Connect**:
+	- `DATABASE_URL`: Transaction pooler, usually port `6543`, with `?pgbouncer=true&connection_limit=1`.
+	- `DIRECT_URL`: Direct connection, usually port `5432`. If your deployment cannot reach IPv6, use Supabase's session pooler connection for migrations instead.
+2. Set `DATABASE_URL` and `DIRECT_URL` in the backend deployment environment. Do not commit them.
+3. From the backend directory, run migrations against Supabase:
+
+	```powershell
+	npm run db:generate
+	npm run db:migrate:deploy
+	```
+
+4. In Cloudflare, open **R2**, create a bucket, then create an API token with **Object Read & Write** permission for that bucket. Copy the Access Key ID and Secret Access Key once.
+5. Configure the backend environment:
+
+	```env
+	STORAGE_PROVIDER=r2
+	R2_ACCOUNT_ID=your-cloudflare-account-id
+	R2_ACCESS_KEY_ID=your-r2-access-key-id
+	R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
+	R2_BUCKET=skill99-recordings
+	R2_PUBLIC_URL=
+	```
+
+	Keep `R2_PUBLIC_URL` blank for a private bucket. The backend stores the object key in Postgres and uploads bytes directly to R2. A public URL or signed-download endpoint can be added later if recordings need to be played in the CRM.
+6. Set production-only values such as `NODE_ENV=production`, a long random `JWT_SECRET`, `CORS_ORIGIN`, and `FRONTEND_URL`, then deploy the backend.
+
+For local development, leave `STORAGE_PROVIDER=local` and recordings are written under `RECORDINGS_DIR`. The same Prisma migrations work locally and on Supabase. Never expose the Supabase database password or R2 secret in frontend or mobile builds.
+
 ## Main modules
 
 Authentication, leads/pipeline/activity, clients, projects, retainers, payments, messages, meetings, tasks, reports, company/team management, platform administration, and public lead/review pages.

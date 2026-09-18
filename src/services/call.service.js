@@ -1,10 +1,8 @@
-import crypto from 'node:crypto';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import prisma from '../utils/prisma.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { leadScope, getTeamMemberIds } from '../utils/scope.js';
 import * as activityService from './activity.service.js';
+import { createRecordingKey, deleteRecording as deleteStoredRecording, putRecording } from './storage.service.js';
 
 const transitions = {
   QUEUED: new Set(['DELIVERED', 'FAILED', 'EXPIRED']),
@@ -291,19 +289,17 @@ export async function deleteRecording(callId, recordingId, actor) {
   await assertCallAccess(callId, actor);
   const rec = await prisma.callRecording.findFirst({ where: { id: recordingId, callId, deletedAt: null } });
   if (!rec) throw new AppError('Recording not found', 404);
+  await deleteStoredRecording(rec.storageKey);
   return prisma.callRecording.update({ where: { id: recordingId }, data: { deletedAt: new Date(), uploadStatus: 'DELETED' } });
 }
 
 export async function uploadRecording(callId, file, actor) {
   const call = await assertCallAccess(callId, actor);
   if (!file) throw new AppError('Recording file is required', 400);
-  const extension = path.extname(file.originalname || '') || '.audio';
-  const storageKey = path.join('recordings', `${callId}-${crypto.randomUUID()}${extension}`);
-  const absolutePath = path.resolve(process.env.RECORDINGS_DIR || './uploads', storageKey);
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  const storageKey = createRecordingKey(callId, file.originalname);
   const recording = await prisma.callRecording.create({ data: { callId, storageKey, mimeType: file.mimetype, sizeBytes: file.size, uploadStatus: 'UPLOADING' } });
   try {
-    await fs.writeFile(absolutePath, file.buffer);
+    await putRecording(storageKey, file);
     return prisma.callRecording.update({ where: { id: recording.id }, data: { uploadStatus: 'UPLOADED' } });
   } catch (error) {
     await prisma.callRecording.update({ where: { id: recording.id }, data: { uploadStatus: 'FAILED' } });
