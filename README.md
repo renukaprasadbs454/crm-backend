@@ -65,6 +65,15 @@ The production backend can use Supabase Postgres for the database and Cloudflare
 	Keep `R2_PUBLIC_URL` blank for a private bucket. The backend stores the object key in Postgres and uploads bytes directly to R2. A public URL or signed-download endpoint can be added later if recordings need to be played in the CRM.
 6. Set production-only values such as `NODE_ENV=production`, a long random `JWT_SECRET`, `CORS_ORIGIN`, and `FRONTEND_URL`, then deploy the backend.
 
+### Render deployment commands
+
+For a Render Web Service using the `hemanth` branch, use:
+
+- Build command: `npm install && npm run render-build`
+- Start command: `npm start`
+
+`render-build` generates Prisma Client and applies all pending migrations once during each deployment. It does not run on every API request. Add all production environment variables in Render's **Environment** section before deploying.
+
 For local development, leave `STORAGE_PROVIDER=local` and recordings are written under `RECORDINGS_DIR`. The same Prisma migrations work locally and on Supabase. Never expose the Supabase database password or R2 secret in frontend or mobile builds.
 
 ## Main modules
