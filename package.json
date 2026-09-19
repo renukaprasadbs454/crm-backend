@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "render-build": "npm run db:generate && npm run db:migrate:deploy && npm run db:seed:plans",
+    "render-build": "npm run db:generate && npm run db:migrate:deploy && npm run db:seed:plans && npm run db:seed:platform-admin",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "prisma generate",
@@ -16,6 +16,7 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "node prisma/seed.js",
     "db:seed:plans": "node prisma/seed-plans.js",
+    "db:seed:platform-admin": "node prisma/seed-platform-admin.js",
     "db:repair-auth": "node prisma/repair-auth.js",
     "db:repair-schema": "node prisma/repair-schema.js",
     "db:backfill-multitenant": "node prisma/backfill-multitenant.js",
