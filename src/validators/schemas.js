@@ -45,6 +45,7 @@ export const loginSchema = z.object({
 
 export const loginOtpRequestSchema = z.object({
   identifier: z.string().min(3),
+  channel: z.enum(['email', 'whatsapp']).default('email'),
   companyId: optionalCompanyId,
   companyName: optionalCompanyName,
   role: z.enum(['COMPANY_ADMIN', 'TL', 'SALES', 'SOLO']).optional(),
@@ -53,6 +54,7 @@ export const loginOtpRequestSchema = z.object({
 export const loginOtpVerifySchema = z.object({
   identifier: z.string().min(3),
   otp: z.string().regex(/^\d{6}$/, 'OTP must be 6 digits'),
+  channel: z.enum(['email', 'whatsapp']).default('email'),
   companyId: optionalCompanyId,
   companyName: optionalCompanyName,
   role: z.enum(['COMPANY_ADMIN', 'TL', 'SALES', 'SOLO']).optional(),

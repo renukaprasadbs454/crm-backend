@@ -115,40 +115,52 @@ export async function login({ identifier, password, companyId, companyName, role
   };
 }
 
-async function createOtp(user, purpose) {
-  if (!user.phone) throw new AppError('No WhatsApp number is registered for this account.', 400);
+async function createOtp(user, purpose, channel = 'email') {
+  const normalizedChannel = String(channel).toLowerCase();
+  if (normalizedChannel === 'whatsapp' && !user.phone) throw new AppError('No WhatsApp number is registered for this account.', 400);
+  if (normalizedChannel !== 'email' && normalizedChannel !== 'whatsapp') throw new AppError('Choose email or WhatsApp verification.', 400);
+  const cooldownSeconds = env.otpResendCooldownSeconds;
+  const cooldownStart = new Date(Date.now() - cooldownSeconds * 1000);
 
   const recent = await prisma.otpChallenge.findFirst({
     where: {
       userId: user.id,
       purpose,
+      channel: normalizedChannel.toUpperCase(),
       consumedAt: null,
-      createdAt: { gte: new Date(Date.now() - 60_000) },
+      createdAt: { gte: cooldownStart },
     },
     orderBy: { createdAt: 'desc' },
   });
-  if (recent) throw new AppError('Please wait 60 seconds before requesting another OTP', 429);
+  if (recent) {
+    const retryAfterSeconds = Math.max(1, cooldownSeconds - Math.ceil((Date.now() - new Date(recent.createdAt).getTime()) / 1000));
+    throw new AppError(`Please wait ${retryAfterSeconds} seconds before requesting another OTP`, 429, null, retryAfterSeconds);
+  }
 
   const otp = generateOtp();
   const expiresAt = new Date(Date.now() + env.otpExpiryMinutes * 60_000);
   const challenge = await prisma.otpChallenge.create({
-    data: { userId: user.id, purpose, codeHash: hashOtp(otp), expiresAt },
+    data: { userId: user.id, purpose, channel: normalizedChannel.toUpperCase(), codeHash: hashOtp(otp), expiresAt },
   });
 
   try {
-    await sendOtpWhatsApp(user.phone, otp);
+    if (normalizedChannel === 'email') {
+      await sendEmail({ to: user.email, subject: 'Your Skill99 CRM login code', text: `Your Skill99 CRM login code is ${otp}. It expires in ${env.otpExpiryMinutes} minutes.` });
+    } else {
+      await sendOtpWhatsApp(user.phone, otp);
+    }
   } catch (error) {
     await prisma.otpChallenge.delete({ where: { id: challenge.id } });
     throw error;
   }
 
-  return { expiresInSeconds: env.otpExpiryMinutes * 60, phone: user.phone };
+  return { expiresInSeconds: env.otpExpiryMinutes * 60, channel: normalizedChannel, email: user.email, phone: user.phone };
 }
 
-export async function requestLoginOtp({ identifier, companyId, companyName, role }) {
+export async function requestLoginOtp({ identifier, channel = 'email', companyId, companyName, role }) {
   const user = await resolveUser({ identifier, companyId, companyName, role });
   assertLoginAllowed(user, role);
-  return createOtp(user, 'LOGIN');
+  return createOtp(user, 'LOGIN', channel);
 }
 
 export async function verifyLoginOtp({ identifier, otp, companyId, companyName, role }) {

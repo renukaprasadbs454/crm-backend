@@ -32,6 +32,7 @@ export const env = {
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || '',
   twilioWhatsAppFrom: process.env.TWILIO_WHATSAPP_FROM || '',
   otpExpiryMinutes: Number(process.env.OTP_EXPIRY_MINUTES) || 10,
+  otpResendCooldownSeconds: Math.max(Number(process.env.OTP_RESEND_COOLDOWN_SECONDS) || 30, 5),
   otpMaxAttempts: Number(process.env.OTP_MAX_ATTEMPTS) || 5,
   whatsappDefaultCountryCode: String(process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '91').replace(/\D/g, ''),
   whatsappLeadWelcomeTemplate: process.env.WHATSAPP_LEAD_WELCOME_TEMPLATE || 'skill99_lead_welcome',

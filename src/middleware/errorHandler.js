@@ -1,8 +1,9 @@
 export class AppError extends Error {
-  constructor(message, status = 400, errors = null) {
+  constructor(message, status = 400, errors = null, retryAfterSeconds = null) {
     super(message);
     this.status = status;
     this.errors = errors;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -26,6 +27,8 @@ export function errorHandler(err, _req, res, _next) {
 
   const status = err.status || 500;
   const message = err.message || 'Internal server error';
+
+  if (err.retryAfterSeconds) res.setHeader('Retry-After', String(err.retryAfterSeconds));
 
   if (status >= 500) {
     console.error(err);
